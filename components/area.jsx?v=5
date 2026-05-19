@@ -1,0 +1,414 @@
+// Service area — interactive radius map with city pins, ZIP check.
+const areaStyles = `
+.fpc-area {
+  padding: var(--section-y) var(--pad-x);
+  background: var(--paper);
+  position: relative;
+}
+.fpc-area .inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  align-items: center;
+}
+.fpc-area h2 {
+  font-family: var(--display);
+  font-style: italic;
+  font-weight: 800;
+  font-size: clamp(48px, 6.5vw, 104px);
+  line-height: 0.9;
+  margin: 12px 0 18px;
+  text-transform: uppercase;
+}
+.fpc-area .lead {
+  color: #2a2f37;
+  margin: 0 0 28px;
+  font-size: 17px;
+  line-height: 1.6;
+  max-width: 460px;
+}
+
+.zip-check {
+  background: #fff;
+  border: 2px solid var(--ink);
+  box-shadow: 6px 6px 0 0 var(--ink);
+  padding: 18px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  max-width: 460px;
+  margin-bottom: 24px;
+}
+.zip-check input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font: 700 18px var(--body);
+  padding: 6px;
+  background: transparent;
+  letter-spacing: 0.1em;
+}
+.zip-check .btn { padding: 12px 20px; }
+.zip-result {
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: 14px;
+  padding: 6px 0;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.zip-result.yes  { color: #14a35a; }
+.zip-result.no   { color: #c5360f; }
+
+.area-cities {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 4px;
+}
+.area-cities .chip {
+  font: 700 italic 13px var(--body);
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  text-transform: uppercase;
+}
+
+/* Map panel */
+.map-card {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  background: var(--ink);
+  border: 2px solid var(--ink);
+  box-shadow: 12px 12px 0 0 var(--accent);
+  overflow: hidden;
+  color: #fff;
+}
+.map-card svg { width: 100%; height: 100%; display: block; }
+.map-card .label {
+  position: absolute;
+  top: 14px; left: 14px;
+  font: 700 11px var(--mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.6);
+}
+.map-card .legend {
+  position: absolute;
+  bottom: 14px; left: 14px;
+  font: 600 12px var(--body);
+  color: rgba(255,255,255,0.7);
+}
+.map-card .legend .swatch {
+  display: inline-block; width: 8px; height: 8px; background: var(--accent-2); margin-right: 6px; border-radius: 50%; box-shadow: 0 0 8px var(--accent-2);
+}
+.pin-label {
+  font: 700 11px/1 var(--body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  fill: #fff;
+}
+.pin-label-sub {
+  font: 500 9px/1 var(--mono);
+  fill: rgba(255,255,255,0.7);
+  letter-spacing: 0.08em;
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(0.6); opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@media (max-width: 980px) {
+  .fpc-area .inner { grid-template-columns: 1fr; gap: 36px; }
+}
+`;
+
+const CITIES_SERVED = [
+// [name, lat, lng, role, labelAnchor, dy]
+['Bentonville', 36.372, -94.209, 'HQ', 'right', 4],
+['Bella Vista', 36.481, -94.275, '', 'right', -8],
+['Pea Ridge', 36.453, -94.114, '', 'right', 4],
+['Centerton', 36.359, -94.286, '', 'left', 4],
+['Rogers', 36.332, -94.119, '', 'right', 4],
+['Cave Springs', 36.262, -94.230, '', 'left', 4],
+['Lowell', 36.255, -94.131, '', 'right', 4],
+['Tontitown', 36.181, -94.232, '', 'hide', 4],
+['Springdale', 36.187, -94.129, '', 'right', 4],
+['Fayetteville', 36.063, -94.158, '', 'right', 4],
+['Farmington', 36.041, -94.247, '', 'left', 4],
+['Siloam Springs', 36.188, -94.540, '', 'right', 4],
+['Pineville', 36.595, -94.385, 'MO', 'left', 4],
+['Noel', 36.546, -94.486, 'MO', 'left', 4],
+['Cassville', 36.677, -93.870, 'MO', 'left', 4],
+['Fort Smith', 35.385, -94.398, '', 'right', 4],
+['Van Buren', 35.437, -94.349, '', 'right', -8],
+['Alma', 35.476, -94.221, '', 'right', 4]];
+
+
+const VALID_ZIPS = new Set([
+// Bentonville / Bella Vista / Centerton / Pea Ridge / Rogers / Lowell / Cave Springs / Tontitown
+'72712', '72713', '72714', '72715', '72716', '72717', '72718', '72719',
+'72722', '72727', '72730', '72732', '72734', '72736', '72738', '72740',
+'72744', '72745', '72747', '72751', '72753', '72756', '72757', '72758', '72762', '72764',
+// Fayetteville / Springdale / Farmington / Siloam Springs
+'72701', '72702', '72703', '72704', '72774',
+// SW Missouri (Pineville, Noel, Anderson, Cassville, Washburn, Seligman, Goodman)
+'64856', '64854', '64831', '64862', '64873', '65625', '65772', '64850',
+// River Valley (Fort Smith, Van Buren, Alma, Mountainburg, Greenwood)
+'72901', '72903', '72904', '72908', '72916', '72917', '72921', '72956', '72957', '72946', '72936']
+);
+
+function ServiceArea() {
+  const [zip, setZip] = React.useState('');
+  const [result, setResult] = React.useState(null);
+
+  const check = (e) => {
+    e?.preventDefault?.();
+    const v = (zip || '').trim();
+    if (v.length < 5) {setResult(null);return;}
+    setResult(VALID_ZIPS.has(v) ? 'yes' : 'no');
+  };
+
+  return (
+    <React.Fragment>
+      <style>{areaStyles}</style>
+      <section id="areas" className="fpc-area">
+        <div className="inner">
+          <div>
+            <div className="eyebrow on-light">Service Area</div>
+            <h2>
+              All over NWA,<br />
+              SW Missouri &amp;<br />
+              the River Valley.
+            </h2>
+            <p className="lead">From Cassville and Pineville down through Bentonville, all the way to Fort Smith and Van Buren. Pop in your ZIP and we’ll tell you on the spot.
+
+            </p>
+
+            <form className="zip-check" onSubmit={check}>
+              <input
+                inputMode="numeric"
+                maxLength="5"
+                placeholder="Enter ZIP code"
+                value={zip}
+                onChange={(e) => {setZip(e.target.value.replace(/\D/g, ''));setResult(null);}} />
+              
+              <button className="btn btn--sm" type="submit">
+                Check <Ic.Arrow width="14" height="14" />
+              </button>
+            </form>
+            {result === 'yes' &&
+            <div className="zip-result yes">✓ We service {zip} &mdash; ready to roll.</div>
+            }
+            {result === 'no' &&
+            <div className="zip-result no">We don&rsquo;t cover {zip} yet &mdash; but call us, we&rsquo;re growing!</div>
+            }
+
+            <div style={{ marginTop: 24 }}>
+              <div className="kicker" style={{ marginBottom: 12, fontSize: 16 }}>Cities we serve</div>
+              <div className="area-cities">
+                {['Bentonville', 'Bella Vista', 'Pea Ridge', 'Rogers', 'Springdale', 'Fayetteville', 'Centerton', 'Cave Springs', 'Lowell', 'Tontitown', 'Farmington', 'Siloam Springs', 'Pineville, MO', 'Noel, MO', 'Cassville, MO', 'Fort Smith', 'Van Buren', 'Alma'].map((c) =>
+                <span className="chip" key={c}>{c}</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="map-card">
+            <div className="label">Coverage Map &mdash; AR + SW MO + OK border</div>
+            {(() => {
+              // Geographic projection bounds
+              const W = 480,H = 640;
+              const lngMin = -94.95,lngMax = -93.55;
+              const latMin = 35.25,latMax = 36.78;
+              const proj = (lat, lng) => [
+              (lng - lngMin) / (lngMax - lngMin) * W,
+              (latMax - lat) / (latMax - latMin) * H];
+
+              // Border / line locations
+              const arMoLatY = proj(36.5, 0)[1]; // AR/MO horizontal
+              const arOkLngX = proj(0, -94.617)[0]; // AR/OK vertical (real tri-state lng)
+              const okMoLngX = proj(0, -94.617)[0]; // OK/MO tri-state corner shares same lng
+              const [hqX, hqY] = proj(36.372, -94.209); // Bentonville
+
+              return (
+                <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid slice">
+                  <defs>
+                    <radialGradient id="haloGrad" cx="50%" cy="50%" r="50%">
+                      <stop offset="0%" stopColor="rgba(53,178,255,0.55)" />
+                      <stop offset="55%" stopColor="rgba(53,178,255,0.20)" />
+                      <stop offset="100%" stopColor="rgba(53,178,255,0)" />
+                    </radialGradient>
+                    <pattern id="gridP" width="32" height="32" patternUnits="userSpaceOnUse">
+                      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+                    </pattern>
+                    <linearGradient id="coverGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="rgba(53,178,255,0.20)" />
+                      <stop offset="100%" stopColor="rgba(0,123,194,0.12)" />
+                    </linearGradient>
+                  </defs>
+
+                  {/* Ink background + grid */}
+                  <rect width={W} height={H} fill="rgb(11,13,16)" />
+                  <rect width={W} height={H} fill="url(#gridP)" />
+
+                  {/* STATE FILLS — split by real borders */}
+                  {/* Arkansas: everything south of AR/MO line and east of AR/OK line */}
+                  <rect x={arOkLngX} y={arMoLatY}
+                  width={W - arOkLngX} height={H - arMoLatY}
+                  fill="rgba(53,178,255,0.06)" />
+                  {/* Missouri: north of AR/MO line, east of OK/MO line */}
+                  <rect x={okMoLngX} y={0}
+                  width={W - okMoLngX} height={arMoLatY}
+                  fill="rgba(255,214,10,0.05)" />
+                  {/* Oklahoma: west of AR/OK line, south of AR/MO */}
+                  <rect x={0} y={arMoLatY}
+                  width={arOkLngX} height={H - arMoLatY}
+                  fill="rgba(255,255,255,0.035)" />
+                  {/* Kansas (tiny corner, NW) */}
+                  <rect x={0} y={0}
+                  width={okMoLngX} height={arMoLatY}
+                  fill="rgba(255,255,255,0.022)" />
+                  {/* OK above 36.5 between OK and MO lines is also OK */}
+                  <rect x={okMoLngX} y={0}
+                  width={arOkLngX - okMoLngX} height={arMoLatY}
+                  fill="rgba(255,255,255,0.035)" />
+
+                  {/* STATE BORDERS */}
+                  <g stroke="rgba(255,255,255,0.32)" strokeWidth="1.4" fill="none">
+                    {/* AR/MO horizontal (from OK tri-state corner east) */}
+                    <line x1={okMoLngX} y1={arMoLatY} x2={W} y2={arMoLatY} />
+                    {/* AR/OK vertical (south of AR/MO line) */}
+                    <line x1={arOkLngX} y1={arMoLatY} x2={arOkLngX} y2={H} />
+                    {/* OK/MO vertical (north of AR/MO line) */}
+                    <line x1={okMoLngX} y1={0} x2={okMoLngX} y2={arMoLatY} strokeDasharray="5 3" />
+                  </g>
+
+                  {/* STATE LABELS — along edges to avoid collision with city labels */}
+                  <g style={{ font: '700 12px var(--mono)', letterSpacing: '0.32em', fill: 'rgba(255,255,255,0.55)' }}>
+                    <text x={(W + arOkLngX) / 2} y="30" textAnchor="middle">MISSOURI</text>
+                    <text x={W - 16} y={(arMoLatY + H) / 2}
+                    transform={`rotate(-90 ${W - 16} ${(arMoLatY + H) / 2})`}
+                    textAnchor="middle">ARKANSAS</text>
+                    <text x="22" y={(arMoLatY + H) / 2}
+                    transform={`rotate(-90 22 ${(arMoLatY + H) / 2})`}
+                    textAnchor="middle">OKLAHOMA</text>
+                    <text x={arOkLngX / 2} y="30" textAnchor="middle" style={{ opacity: 0.55, fontSize: 10 }}>KANSAS</text>
+                  </g>
+
+                  {/* I-49 corridor + Arkansas River suggestion */}
+                  <g stroke="rgba(53,178,255,0.25)" strokeWidth="1" fill="none">
+                    {/* I-49 roughly N-S along -94.2 to -94.35 */}
+                    <path
+                      d={`M ${proj(36.78, -94.18)[0]} ${proj(36.78, -94.18)[1]}
+                          Q ${proj(36.3, -94.2)[0]} ${proj(36.3, -94.2)[1]}
+                            ${proj(35.9, -94.22)[0]} ${proj(35.9, -94.22)[1]}
+                          T ${proj(35.43, -94.35)[0]} ${proj(35.43, -94.35)[1]}`}
+                      strokeDasharray="2 4" />
+                    
+                    {/* Arkansas River curve south */}
+                    <path
+                      d={`M ${proj(35.36, -94.95)[0]} ${proj(35.36, -94.95)[1]}
+                          Q ${proj(35.39, -94.43)[0]} ${proj(35.39, -94.43)[1]}
+                            ${proj(35.46, -93.6)[0]} ${proj(35.46, -93.6)[1]}`}
+                      strokeDasharray="1 5"
+                      opacity="0.7" />
+                    
+                  </g>
+
+                  {/* COVERAGE ENVELOPE — hard vertical edge at the AR/OK border (lng -94.617) */}
+                  <path
+                    d={(() => {
+                      // Anchor points (lat, lng), going clockwise from NW corner.
+                      // West edge is a HARD STRAIGHT LINE at lng=-94.617 (the AR/OK border).
+                      // We treat right up to that line, never west of it.
+                      const blob = [
+                      [36.78, -94.617], // NW — top of OK border
+                      [36.78, -93.75], // NE — north of Cassville
+                      [36.45, -93.75], // E of Cassville
+                      [36.00, -93.85],
+                      [35.55, -93.95],
+                      [35.30, -94.05], // SE corner
+                      [35.28, -94.617] // SW — bottom of OK border
+                      // back up the OK border line to close
+                      ];
+                      const pts = blob.map(([la, ln]) => proj(la, ln));
+                      return 'M ' + pts.map((p) => p.join(' ')).join(' L ') + ' Z';
+                    })()}
+                    fill="url(#coverGrad)"
+                    stroke="rgba(53,178,255,0.65)"
+                    strokeWidth="1.8"
+                    strokeDasharray="3 3" />
+                  
+
+                  {/* Solid emphasis on the AR/OK border edge — where coverage hard-stops */}
+                  <line
+                    x1={arOkLngX} y1={proj(35.28, 0)[1]}
+                    x2={arOkLngX} y2={proj(36.78, 0)[1]}
+                    stroke="rgba(53,178,255,0.95)"
+                    strokeWidth="3" />
+                  
+
+                  {/* Halo on HQ */}
+                  <circle cx={hqX} cy={hqY} r="95" fill="url(#haloGrad)" />
+
+                  {/* CITY PINS */}
+                  {CITIES_SERVED.map(([name, lat, lng, role, anchor, dy]) => {
+                    const [x, y] = proj(lat, lng);
+                    const isHQ = role === 'HQ';
+                    const isMO = role === 'MO';
+                    const labelX = anchor === 'left' ? x - 8 : x + 8;
+                    const textAnchor = anchor === 'left' ? 'end' : 'start';
+                    return (
+                      <g key={name}>
+                        {isHQ &&
+                        <circle cx={x} cy={y} r="16" fill="none" stroke="rgba(53,178,255,0.55)" strokeWidth="1.5">
+                            <animate attributeName="r" values="12;42;12" dur="2.8s" repeatCount="indefinite" />
+                            <animate attributeName="opacity" values="0.7;0;0.7" dur="2.8s" repeatCount="indefinite" />
+                          </circle>
+                        }
+                        <circle
+                          cx={x} cy={y}
+                          r={isHQ ? 6.5 : 3.6}
+                          fill={isHQ ? '#35b2ff' : isMO ? '#ffd60a' : '#ffffff'}
+                          stroke={isHQ ? '#ffffff' : 'rgba(53,178,255,0.55)'}
+                          strokeWidth="1.2" />
+                        
+                        <text
+                          x={labelX}
+                          y={y + dy}
+                          textAnchor={textAnchor}
+                          className="pin-label"
+                          style={{ fontSize: isHQ ? 12 : 10, display: anchor === 'hide' ? 'none' : 'block' }}>
+                          
+                          {name}
+                        </text>
+                      </g>);
+
+                  })}
+
+                  {/* Compass */}
+                  <g transform={`translate(${W - 36} ${H - 40})`} opacity="0.55">
+                    <circle r="20" fill="none" stroke="#fff" strokeWidth="1" />
+                    <path d="M 0 -16 L 3 0 L 0 16 L -3 0 Z" fill="#35b2ff" />
+                    <text x="0" y="-23" textAnchor="middle" className="pin-label" style={{ fontSize: 9 }}>N</text>
+                  </g>
+                </svg>);
+
+            })()}
+            <div className="legend">
+              <span className="swatch" /> HQ &mdash; Bentonville, AR &nbsp;·&nbsp;
+              <span style={{ display: 'inline-block', width: 8, height: 8, background: '#ffd60a', borderRadius: '50%', marginRight: 6, verticalAlign: 'middle' }} />
+              Out-of-state coverage
+            </div>
+          </div>
+        </div>
+      </section>
+    </React.Fragment>);
+
+}
+
+window.ServiceArea = ServiceArea;
